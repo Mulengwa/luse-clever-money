@@ -1,0 +1,25 @@
+name: Daily LuSE Wrap
+on:
+  schedule:
+    - cron: '30 14 * * 1-5'
+  workflow_dispatch:
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - run: pip install -r requirements.txt
+      - run: python src/database.py
+      - run: python src/scraper_v2.py
+      - run: python src/generate_posts.py
+      - run: python src/social_captions.py
+      - run: python src/excel_export.py || true
+      - run: |
+          git config user.name "CleverMoneyBot"
+          git config user.email "bot@clevermoney.zm"
+          git add luse_v2.db posts/ LUSE_V2_Master.xlsx || true
+          git commit -m "Daily wrap $(date +%F)" || true
+          git push || true
