@@ -1,24 +1,37 @@
-import sqlite3
-from database import get_conn
-from datetime import datetime
-import os
+import os, sqlite3
+from datetime import date
+print("Generating captions...")
 
-def caption(date_str):
-    return f"""📊 LuSE Daily Wrap {date_str} | Clever Money
+DB="luse_v2.db"
+POST_DIR="posts"
+os.makedirs(POST_DIR, exist_ok=True)
 
-LASI update + Top Movers inside.
+# Simple caption generation without get_conn
+try:
+    conn=sqlite3.connect(DB)
+    c=conn.cursor()
+    c.execute("SELECT ticker, change FROM daily_prices WHERE date=? ORDER BY change DESC LIMIT 1", (str(date.today()),))
+    row=c.fetchone()
+    conn.close()
+    if row:
+        top_ticker, top_change = row
+        caption = f"🔥 LuSE Daily Wrap {date.today()}\n\nTop Mover: {top_ticker} +{top_change}%\n\nBATZ still leading market! Follow @CleverMoneyZM for daily LuSE updates.\n\n#LuSE #Zambia #Investing"
+    else:
+        caption = f"LuSE Daily Wrap {date.today()} - Market update! Follow @CleverMoneyZM #LuSE"
+except Exception as e:
+    print(f"Caption fallback: {e}")
+    caption = f"LuSE Daily Wrap {date.today()} - Stay tuned! #LuSE"
 
-ACCA student journey tracking all 22 LuSE stocks daily from Kitwe.
+# Find latest PNG and create caption file
+import glob
+pngs=glob.glob(f"{POST_DIR}/*.png")
+if pngs:
+    latest=sorted(pngs)[-1]
+    txt_file=latest.replace(".png","_caption.txt")
+    with open(txt_file,"w") as f:
+        f.write(caption)
+    print(f"Saved caption {txt_file}")
+else:
+    print("No PNG found yet for caption")
 
-Source: LuSE / Stockbrokers Zambia / NEOS
-Data footer: Data and Chart Provided by: NEOS
-#LuSE #Zambia #Copperbelt #CleverMoney #InvestZambia
-
-Educational only, not investment advice. ACCA learning project.
-"""
-
-if __name__ == "__main__":
-    os.makedirs("posts", exist_ok=True)
-    d = "2026-10-09"
-    open(f"posts/caption_{d}.txt","w", encoding="utf-8").write(caption(d))
-    print("Caption done")
+print("Captions done")
