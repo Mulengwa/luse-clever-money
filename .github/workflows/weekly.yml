@@ -1,0 +1,23 @@
+name: Weekly Carousel Sunday
+on:
+  schedule:
+    - cron: '0 16 * * 0'
+  workflow_dispatch:
+jobs:
+  weekly:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - run: pip install -r requirements.txt
+      - run: python src/database.py
+      - run: python src/social_captions.py
+      - run: python src/generate_posts.py --weekly 2026-10-12 || python src/generate_posts.py
+      - run: |
+          git config user.name "CleverMoneyBot"
+          git config user.email "bot@clevermoney.zm"
+          git add posts/ || true
+          git commit -m "Weekly carousel $(date +%F)" || true
+          git push || true
