@@ -1,6 +1,6 @@
 # luse-clever-money
 
-Automated daily LuSE (Lusaka Securities Exchange) market wrap for CleverMoney Zambia.
+Automated / on-demand LuSE (Lusaka Securities Exchange) market wrap for CleverMoney Zambia.
 
 ## Data sources — official only
 
@@ -9,43 +9,38 @@ Automated daily LuSE (Lusaka Securities Exchange) market wrap for CleverMoney Za
 
 No third-party aggregators. No fabricated prices.
 
-## Cloudflare limitation
+## How to run (recommended on Windows / Surface)
 
-`luse.co.zm` sits behind **Cloudflare managed challenge**.  
-Plain HTTP clients (and most GitHub-hosted runners) receive **403 / “Just a moment…”** and never see the price table.
+Official LuSE is behind Cloudflare, so **GitHub-hosted runners usually fail**. Use one of:
 
-### Recommended setup for reliable official data
+### A. On-demand GitHub Action (self-hosted runner)
 
-Use a **self-hosted GitHub Actions runner** on a machine that can open the LuSE site in a normal browser (e.g. PC or small VPS in Zambia):
+1. Register a Windows self-hosted runner (see [docs/SELF_HOSTED.md](docs/SELF_HOSTED.md)).
+2. Turn the machine on when you want a wrap.
+3. **Actions** → **Daily LuSE Wrap** → **Run workflow**.
 
-1. Repo → Settings → Actions → Runners → New self-hosted runner
-2. Install the runner on your machine and start it
-3. In `.github/workflows/daily.yml` set:
+You do **not** need the device on 24/7.
 
-```yaml
-runs-on: self-hosted
+### B. Fully local
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_local.ps1
 ```
-
-Then the scraper runs from an IP Cloudflare is more likely to allow.
-
-Optional long-term: email LuSE (`customerservice@luse.co.zm`) and ask for a data feed / API for a non-commercial market-education project.
 
 ## Honest data policy
 
 If official sources cannot be reached, **no prices are stored**. The post says live data is unavailable.
 
-## Running locally (best for testing official access)
+## Project structure
 
-```bash
-pip install -r requirements.txt
-python src/database.py
-python src/scraper_v2.py
-python src/generate_posts.py
-python src/social_captions.py
 ```
-
-If your local network can open luse.co.zm in Chrome, the scraper should succeed.
+.github/workflows/   # daily.yml, weekly.yml (self-hosted)
+src/                 # scraper, DB, image, captions
+scripts/run_local.ps1
+docs/SELF_HOSTED.md
+posts/
+```
 
 ## Attribution
 
-Posts credit the official source used. Not affiliated with LuSE.
+Posts credit the official source. Not affiliated with LuSE.

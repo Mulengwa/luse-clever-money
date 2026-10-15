@@ -7,8 +7,15 @@ DB = "luse_v2.db"
 POST_DIR = "posts"
 os.makedirs(POST_DIR, exist_ok=True)
 
+
 def get_font(size):
     candidates = [
+        # Windows
+        r"C:\Windows\Fonts\arialbd.ttf",
+        r"C:\Windows\Fonts\arial.ttf",
+        r"C:\Windows\Fonts\segoeui.ttf",
+        r"C:\Windows\Fonts\calibri.ttf",
+        # Linux
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "DejaVuSans-Bold.ttf",
@@ -20,6 +27,7 @@ def get_font(size):
         except OSError:
             continue
     return ImageFont.load_default()
+
 
 # Attribution source
 source = "LuSE"

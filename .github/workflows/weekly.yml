@@ -1,12 +1,13 @@
 name: Weekly Carousel Sunday
+
 on:
-  schedule:
-    - cron: '0 16 * * 0'   # Sunday 18:00 CAT
   workflow_dispatch:
+  schedule:
+    - cron: '0 16 * * 0'   # Sunday 18:00 CAT (optional)
 
 jobs:
   weekly:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     permissions:
       contents: write
     steps:
@@ -16,22 +17,20 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install system fonts
-        run: sudo apt-get update && sudo apt-get install -y fonts-dejavu-core
-
       - name: Install Python deps
         run: pip install -r requirements.txt
 
       - name: Prepare database
         run: python src/database.py
 
-      - name: Generate post (uses latest available data)
+      - name: Generate post (latest available data)
         run: python src/generate_posts.py
 
       - name: Generate caption
         run: python src/social_captions.py
 
       - name: Commit & push
+        shell: bash
         run: |
           git config user.name "CleverMoneyBot"
           git config user.email "bot@clevermoney.zm"
