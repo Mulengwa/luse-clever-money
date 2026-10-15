@@ -6,3 +6,4 @@ pillow==10.4.0
 matplotlib==3.8.4
 fpdf2==2.7.9
 lxml==5.2.2
+cloudscraper==1.2.71

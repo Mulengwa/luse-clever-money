@@ -1,11 +1,14 @@
 name: Daily LuSE Wrap
 on:
   schedule:
-    - cron: '30 14 * * 1-5'   # 16:30 CAT (14:30 UTC) weekdays
+    - cron: '30 14 * * 1-5'   # 16:30 CAT weekdays
   workflow_dispatch:
 
 jobs:
   daily:
+    # Prefer self-hosted if you register a runner that can reach luse.co.zm
+    # (GitHub-hosted runners are often blocked by Cloudflare).
+    # runs-on: self-hosted
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -25,7 +28,7 @@ jobs:
       - name: Prepare database
         run: python src/database.py
 
-      - name: Scrape LuSE
+      - name: Scrape LuSE (official only)
         run: python src/scraper_v2.py
 
       - name: Generate post image
@@ -38,8 +41,6 @@ jobs:
         run: |
           git config user.name "CleverMoneyBot"
           git config user.email "bot@clevermoney.zm"
-          # Never commit the SQLite DB
           git add posts/ || true
-          git add -u posts/ || true
           git commit -m "Daily wrap $(date +%F)" || echo "no changes"
           git push || echo "push failed"

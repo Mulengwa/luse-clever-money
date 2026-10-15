@@ -2,48 +2,39 @@
 
 Automated daily LuSE (Lusaka Securities Exchange) market wrap for CleverMoney Zambia.
 
-## What it does
+## Data sources — official only
 
-- Scrapes live equity prices from **official LuSE sources** first
-- Falls back to a public aggregator only if official pages are unreachable
-- Generates a 1080×1080 "Daily Wrap" image + social caption
-- Commits results via GitHub Actions (weekdays)
+1. [luse.co.zm/trading/market-data](https://www.luse.co.zm/trading/market-data/)
+2. [luse.co.zm](https://www.luse.co.zm/) homepage tickers
 
-## Data sources (priority order)
+No third-party aggregators. No fabricated prices.
 
-1. **Official** – [luse.co.zm/trading/market-data](https://www.luse.co.zm/trading/market-data/)
-2. **Official** – [luse.co.zm](https://www.luse.co.zm/) homepage tickers
-3. **Unofficial last resort** – [afx.kwayisi.org/luse](https://afx.kwayisi.org/luse/)
+## Cloudflare limitation
 
-Every post attributes the source used.
+`luse.co.zm` sits behind **Cloudflare managed challenge**.  
+Plain HTTP clients (and most GitHub-hosted runners) receive **403 / “Just a moment…”** and never see the price table.
+
+### Recommended setup for reliable official data
+
+Use a **self-hosted GitHub Actions runner** on a machine that can open the LuSE site in a normal browser (e.g. PC or small VPS in Zambia):
+
+1. Repo → Settings → Actions → Runners → New self-hosted runner
+2. Install the runner on your machine and start it
+3. In `.github/workflows/daily.yml` set:
+
+```yaml
+runs-on: self-hosted
+```
+
+Then the scraper runs from an IP Cloudflare is more likely to allow.
+
+Optional long-term: email LuSE (`customerservice@luse.co.zm`) and ask for a data feed / API for a non-commercial market-education project.
 
 ## Honest data policy
 
-If all sources fail or return fewer than 5 tickers, **no prices are stored** for that day. The generated post clearly states that live data is unavailable — it never shows fabricated or stale numbers as live data.
+If official sources cannot be reached, **no prices are stored**. The post says live data is unavailable.
 
-## Legal / attribution notes
-
-- Closing prices are published by LuSE for public monitoring (see LuSE FAQ).
-- This project makes one polite request per weekday, identifies itself with a User-Agent, and produces derived social content with attribution.
-- It does **not** resell a raw data feed. For commercial redistribution of market data, contact LuSE for licensing.
-- This is not legal advice.
-
-## Project structure
-
-```
-.github/workflows/
-  daily.yml      # weekday ~16:30 CAT
-  weekly.yml     # Sunday
-src/
-  database.py
-  scraper_v2.py
-  generate_posts.py
-  social_captions.py
-posts/
-requirements.txt
-```
-
-## Running locally
+## Running locally (best for testing official access)
 
 ```bash
 pip install -r requirements.txt
@@ -53,7 +44,8 @@ python src/generate_posts.py
 python src/social_captions.py
 ```
 
-## Notes
+If your local network can open luse.co.zm in Chrome, the scraper should succeed.
 
-- `luse_v2.db` is git-ignored.
-- DejaVu fonts are installed on the GitHub Actions runner.
+## Attribution
+
+Posts credit the official source used. Not affiliated with LuSE.

@@ -1,41 +1,61 @@
 """
-LuSE daily price scraper.
+LuSE daily price scraper — OFFICIAL SOURCES ONLY.
 
 Sources (in order):
-  1. Official Market Data page  – https://www.luse.co.zm/trading/market-data/
-  2. Official homepage tickers  – https://www.luse.co.zm/
-  3. Unofficial aggregator      – https://afx.kwayisi.org/luse/  (last resort only)
+  1. https://www.luse.co.zm/trading/market-data/
+  2. https://www.luse.co.zm/  (homepage tickers)
 
-Policy: never insert fabricated or stale prices. If all sources fail,
-store nothing for today so the post generator shows an honest message.
+No third-party aggregators. No fabricated prices.
+
+Note: luse.co.zm is protected by Cloudflare. From GitHub-hosted runners
+(datacenter IPs) the challenge often blocks access. Prefer a self-hosted
+runner in Zambia or a residential IP for reliable official access.
 """
 
+import os
 import re
 import sqlite3
-import requests
 from datetime import date
+
 from bs4 import BeautifulSoup
 
 DB = "luse_v2.db"
 today = str(date.today())
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (compatible; CleverMoneyBot/1.0; "
-        "+https://github.com/Mulengwa/luse-clever-money)"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-}
-
 OFFICIAL_MARKET_DATA = "https://www.luse.co.zm/trading/market-data/"
 OFFICIAL_HOME = "https://www.luse.co.zm/"
-UNOFFICIAL_AFX = "https://afx.kwayisi.org/luse/"
+
+
+def _session():
+    """Prefer cloudscraper (JS-challenge aware); fall back to requests."""
+    try:
+        import cloudscraper
+
+        return cloudscraper.create_scraper(
+            browser={"browser": "chrome", "platform": "windows", "mobile": False}
+        )
+    except Exception:
+        import requests
+
+        s = requests.Session()
+        s.headers.update(
+            {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+            }
+        )
+        return s
 
 
 def ensure_schema(conn):
     c = conn.cursor()
-    c.execute("""
+    c.execute(
+        """
         CREATE TABLE IF NOT EXISTS daily_prices (
             ticker TEXT,
             date   TEXT,
@@ -43,12 +63,12 @@ def ensure_schema(conn):
             change REAL,
             volume INTEGER
         )
-    """)
+        """
+    )
     conn.commit()
 
 
 def insert_rows(conn, rows):
-    """rows: list of (ticker, date, price, change_pct, volume)"""
     c = conn.cursor()
     c.execute("DELETE FROM daily_prices WHERE date=?", (today,))
     if rows:
@@ -58,7 +78,6 @@ def insert_rows(conn, rows):
 
 
 def _parse_number(text):
-    """Parse numbers like '12.49', '-0.46', '1,982', '-', '' → float or None."""
     if text is None:
         return None
     t = str(text).strip().replace(",", "").replace("+", "")
@@ -79,28 +98,43 @@ def _pct_from_abs(price, abs_change):
     return round(abs_change / prev * 100, 2)
 
 
-def scrape_official_market_data():
-    """Parse the official Daily Stock Data table."""
-    print(f"Trying official Market Data: {OFFICIAL_MARKET_DATA}")
-    r = requests.get(OFFICIAL_MARKET_DATA, headers=HEADERS, timeout=20)
-    r.raise_for_status()
-    soup = BeautifulSoup(r.text, "html.parser")
+def _normalize_ticker(raw):
+    t = raw.upper().strip()
+    aliases = {
+        "ZCCM-IH": "ZCCM",
+        "ZCCM IH": "ZCCM",
+        "ZAMBIA RE": "ZMRE",
+        "REIZUSD": "REIZ",
+    }
+    return aliases.get(t, t)
 
+
+def scrape_official_market_data(session):
+    print(f"Trying official Market Data: {OFFICIAL_MARKET_DATA}")
+    r = session.get(OFFICIAL_MARKET_DATA, timeout=45)
+    print(f"  HTTP {r.status_code}, body length {len(r.text)}")
+    if r.status_code != 200:
+        raise RuntimeError(f"HTTP {r.status_code} (likely Cloudflare challenge)")
+    if "Just a moment" in r.text or "cf-mitigated" in r.text.lower():
+        raise RuntimeError("Cloudflare challenge page returned")
+
+    soup = BeautifulSoup(r.text, "html.parser")
     rows = []
+
     for table in soup.find_all("table"):
         headers = [th.get_text(strip=True).lower() for th in table.find_all("th")]
-        # Need at least Security + Closing Price columns
         if not any("security" in h or "closing" in h for h in headers):
             continue
 
-        # Map column indices
         col = {}
         for i, h in enumerate(headers):
             if "security" in h:
                 col["ticker"] = i
-            elif "closing" in h or ("price" in h and "bid" not in h and "ask" not in h):
+            elif "closing" in h or (
+                "price" in h and "bid" not in h and "ask" not in h and "change" not in h
+            ):
                 col["price"] = i
-            elif "price change" in h or h == "change":
+            elif "price change" in h or h.strip() == "change":
                 col["change"] = i
             elif "volume" in h and "value" not in h:
                 col["volume"] = i
@@ -113,39 +147,26 @@ def scrape_official_market_data():
             if len(tds) <= max(col.values()):
                 continue
             try:
-                ticker = tds[col["ticker"]].upper().strip()
-                # Skip bond / empty rows
-                if not ticker or not re.match(r"^[A-Z]{2,6}$", ticker):
+                ticker = _normalize_ticker(tds[col["ticker"]])
+                if not re.match(r"^[A-Z]{2,6}$", ticker):
                     continue
-                # Normalise known aliases
-                if ticker in ("ZCCM-IH", "ZCCM IH"):
-                    ticker = "ZCCM"
-                if ticker == "ZAMBIA RE":
-                    ticker = "ZMRE"
-                if ticker == "REIZUSD":
-                    ticker = "REIZ"
-
                 price = _parse_number(tds[col["price"]])
                 if price is None or price <= 0 or price > 100000:
                     continue
-
                 abs_change = 0.0
                 if "change" in col:
                     v = _parse_number(tds[col["change"]])
                     if v is not None:
                         abs_change = v
-
                 volume = 0
                 if "volume" in col:
                     v = _parse_number(tds[col["volume"]])
                     if v is not None:
                         volume = int(v)
-
                 pct = _pct_from_abs(price, abs_change)
                 rows.append((ticker, today, price, pct, volume))
             except (ValueError, IndexError):
                 continue
-
         if rows:
             break
 
@@ -153,18 +174,19 @@ def scrape_official_market_data():
     return rows
 
 
-def scrape_official_homepage():
-    """Parse homepage price widgets (ticker / price / change blocks)."""
+def scrape_official_homepage(session):
     print(f"Trying official homepage: {OFFICIAL_HOME}")
-    r = requests.get(OFFICIAL_HOME, headers=HEADERS, timeout=20)
-    r.raise_for_status()
+    r = session.get(OFFICIAL_HOME, timeout=45)
+    print(f"  HTTP {r.status_code}, body length {len(r.text)}")
+    if r.status_code != 200:
+        raise RuntimeError(f"HTTP {r.status_code} (likely Cloudflare challenge)")
+    if "Just a moment" in r.text or "cf-mitigated" in r.text.lower():
+        raise RuntimeError("Cloudflare challenge page returned")
+
     soup = BeautifulSoup(r.text, "html.parser")
     text = soup.get_text("\n", strip=True)
 
-    # Pattern: TICKER then number then optional +/‑ change on nearby lines
-    # Homepage structure from observation: ## AECI \n ## 115.00 \n ## 0.00
     rows = []
-    # Find sequences of ALL-CAPS ticker followed by two numbers
     pattern = re.compile(
         r"\b([A-Z]{2,8}(?:-IH)?)\b\s*[\n\r]+\s*"
         r"([0-9]+(?:\.[0-9]+)?)\s*[\n\r]+\s*"
@@ -172,16 +194,13 @@ def scrape_official_homepage():
         re.MULTILINE,
     )
     seen = set()
+    skip = {"LASI", "TRADE", "SENS", "LUSE", "ZMW", "ZAMBIA"}
     for m in pattern.finditer(text):
-        ticker = m.group(1).upper()
-        if ticker in seen:
+        ticker = _normalize_ticker(m.group(1))
+        if ticker in seen or ticker in skip:
             continue
-        if ticker in ("LASI", "TRADE", "SENS", "LUSE", "ZMW"):
+        if not re.match(r"^[A-Z]{2,6}$", ticker):
             continue
-        if ticker == "ZCCM-IH":
-            ticker = "ZCCM"
-        if ticker == "ZAMBIA":
-            continue  # part of "ZAMBIA RE"
         price = float(m.group(2))
         abs_change = float(m.group(3))
         if price <= 0 or price > 100000:
@@ -194,62 +213,25 @@ def scrape_official_homepage():
     return rows
 
 
-def scrape_afx():
-    """Unofficial last-resort source."""
-    print(f"Trying unofficial AFX: {UNOFFICIAL_AFX}")
-    r = requests.get(UNOFFICIAL_AFX, headers=HEADERS, timeout=15)
-    r.raise_for_status()
-    soup = BeautifulSoup(r.text, "html.parser")
-
-    rows = []
-    for table in soup.find_all("table"):
-        headers = [th.get_text(strip=True).lower() for th in table.find_all("th")]
-        if not any("ticker" in h or "price" in h for h in headers):
-            continue
-
-        for tr in table.find_all("tr")[1:]:
-            tds = [td.get_text(strip=True) for td in tr.find_all("td")]
-            if len(tds) < 4:
-                continue
-            try:
-                ticker = tds[0].upper().replace("LUSE:", "").strip()
-                if not ticker or not re.match(r"^[A-Z]{2,6}$", ticker):
-                    continue
-                vol = _parse_number(tds[2]) or 0
-                price = _parse_number(tds[3])
-                abs_change = _parse_number(tds[4]) if len(tds) > 4 else 0.0
-                if price is None or price <= 0 or price > 100000:
-                    continue
-                pct = _pct_from_abs(price, abs_change or 0.0)
-                rows.append((ticker, today, price, pct, int(vol)))
-            except (ValueError, IndexError):
-                continue
-        if rows:
-            break
-
-    print(f"  AFX → {len(rows)} tickers")
-    return rows
-
-
 def scrape():
-    """Try sources in order. Return (rows, source_name)."""
+    session = _session()
     sources = [
-        ("LuSE Market Data", scrape_official_market_data),
-        ("LuSE Homepage", scrape_official_homepage),
-        ("AFX (unofficial)", scrape_afx),
+        ("LuSE Market Data", lambda: scrape_official_market_data(session)),
+        ("LuSE Homepage", lambda: scrape_official_homepage(session)),
     ]
     for name, fn in sources:
         try:
             rows = fn()
             if len(rows) >= 5:
                 return rows, name
-            print(f"  {name}: only {len(rows)} tickers — trying next source")
+            print(f"  {name}: only {len(rows)} tickers — trying next")
         except Exception as e:
             print(f"  {name} failed: {type(e).__name__}: {e}")
     return [], None
 
 
 def main():
+    os.makedirs("posts", exist_ok=True)
     conn = sqlite3.connect(DB)
     ensure_schema(conn)
 
@@ -257,12 +239,14 @@ def main():
 
     if len(rows) < 5:
         print(
-            f"Only {len(rows)} tickers from all sources — "
-            "NOT inserting any data (avoids misleading prices)"
+            f"Only {len(rows)} tickers from official sources — "
+            "NOT inserting any data (avoids misleading prices)."
+        )
+        print(
+            "HINT: luse.co.zm uses Cloudflare. GitHub-hosted runners often fail. "
+            "Use a self-hosted runner (e.g. PC/VPS in Zambia) for reliable access."
         )
         insert_rows(conn, [])
-        print("No live data stored for today")
-        # Write a small marker so captions know the outcome
         with open("posts/.last_scrape_source", "w") as f:
             f.write("none\n")
     else:
