@@ -1,8 +1,9 @@
 name: Daily LuSE Wrap
 on:
   schedule:
-    - cron: '30 14 * * 1-5'
+    - cron: '30 14 * * 1-5'   # 16:30 CAT (14:30 UTC) weekdays
   workflow_dispatch:
+
 jobs:
   daily:
     runs-on: ubuntu-latest
@@ -10,18 +11,35 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-      - run: pip install -r requirements.txt
-      - run: python src/database.py
-      - run: python src/scraper_v2.py
-      - run: python src/generate_posts.py
-      - run: python src/social_captions.py
-      - run: python src/excel_export.py || true
-      - run: |
+
+      - name: Install system fonts
+        run: sudo apt-get update && sudo apt-get install -y fonts-dejavu-core
+
+      - name: Install Python deps
+        run: pip install -r requirements.txt
+
+      - name: Prepare database
+        run: python src/database.py
+
+      - name: Scrape LuSE
+        run: python src/scraper_v2.py
+
+      - name: Generate post image
+        run: python src/generate_posts.py
+
+      - name: Generate caption
+        run: python src/social_captions.py
+
+      - name: Commit & push results
+        run: |
           git config user.name "CleverMoneyBot"
           git config user.email "bot@clevermoney.zm"
-          git add -A
+          # Never commit the SQLite DB
+          git add posts/ || true
+          git add -u posts/ || true
           git commit -m "Daily wrap $(date +%F)" || echo "no changes"
           git push || echo "push failed"

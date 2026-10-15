@@ -1,34 +1,54 @@
-import os, sqlite3
+import os
+import sqlite3
+import glob
 from datetime import date
+
 print("Generating captions...")
 
-DB="luse_v2.db"
-POST_DIR="posts"
+DB = "luse_v2.db"
+POST_DIR = "posts"
 os.makedirs(POST_DIR, exist_ok=True)
 
-# Simple caption generation without get_conn
+caption = None
 try:
-    conn=sqlite3.connect(DB)
-    c=conn.cursor()
-    c.execute("SELECT ticker, change FROM daily_prices WHERE date=? ORDER BY change DESC LIMIT 1", (str(date.today()),))
-    row=c.fetchone()
+    conn = sqlite3.connect(DB)
+    c = conn.cursor()
+    c.execute(
+        "SELECT ticker, change FROM daily_prices WHERE date=? ORDER BY change DESC LIMIT 1",
+        (str(date.today()),),
+    )
+    row = c.fetchone()
     conn.close()
+
     if row:
         top_ticker, top_change = row
-        caption = f"🔥 LuSE Daily Wrap {date.today()}\n\nTop Mover: {top_ticker} +{top_change}%\n\nBATZ still leading market! Follow @CleverMoneyZM for daily LuSE updates.\n\n#LuSE #Zambia #Investing"
+        sign = "+" if top_change >= 0 else ""
+        caption = (
+            f"🔥 LuSE Daily Wrap {date.today()}\n\n"
+            f"Top Mover: {top_ticker} {sign}{top_change:.2f}%\n\n"
+            f"Follow @CleverMoneyZM for daily LuSE updates.\n\n"
+            f"#LuSE #Zambia #Investing"
+        )
     else:
-        caption = f"LuSE Daily Wrap {date.today()} - Market update! Follow @CleverMoneyZM #LuSE"
+        caption = (
+            f"LuSE Daily Wrap {date.today()}\n\n"
+            f"No live market data available today.\n"
+            f"Follow @CleverMoneyZM for updates when the market is open.\n\n"
+            f"#LuSE #Zambia"
+        )
 except Exception as e:
-    print(f"Caption fallback: {e}")
-    caption = f"LuSE Daily Wrap {date.today()} - Stay tuned! #LuSE"
+    print(f"Caption error: {e}")
+    caption = (
+        f"LuSE Daily Wrap {date.today()}\n\n"
+        f"Stay tuned for market updates.\n"
+        f"Follow @CleverMoneyZM #LuSE"
+    )
 
-# Find latest PNG and create caption file
-import glob
-pngs=glob.glob(f"{POST_DIR}/*.png")
+pngs = glob.glob(f"{POST_DIR}/*.png")
 if pngs:
-    latest=sorted(pngs)[-1]
-    txt_file=latest.replace(".png","_caption.txt")
-    with open(txt_file,"w") as f:
+    latest = sorted(pngs)[-1]
+    txt_file = latest.replace(".png", "_caption.txt")
+    with open(txt_file, "w") as f:
         f.write(caption)
     print(f"Saved caption {txt_file}")
 else:

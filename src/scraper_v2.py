@@ -1,48 +1,105 @@
-import sqlite3, requests
+import sqlite3
+import requests
 from datetime import date
 from bs4 import BeautifulSoup
 
-DB="luse_v2.db"
-URL="https://afx.kwayisi.org/"
-headers={"User-Agent":"Mozilla/5.0"}
-today=str(date.today())
+DB = "luse_v2.db"
+URL = "https://afx.kwayisi.org/luse/"
+HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; CleverMoneyBot/1.0)"}
+today = str(date.today())
 
-print(f"Fetching {URL}")
-r=requests.get(URL, headers=headers, timeout=20)
-soup=BeautifulSoup(r.text, "html.parser")
+def ensure_schema(conn):
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS daily_prices (
+            ticker TEXT,
+            date   TEXT,
+            price  REAL,
+            change REAL,
+            volume INTEGER
+        )
+    """)
+    conn.commit()
 
-# afx main page has all tickers in one table
-conn=sqlite3.connect(DB)
-c=conn.cursor()
-c.execute("CREATE TABLE IF NOT EXISTS daily_prices (ticker TEXT, date TEXT, price REAL, change_pct REAL, volume INTEGER)")
-c.execute("DELETE FROM daily_prices WHERE date=?", (today,))
+def insert_rows(conn, rows):
+    """rows: list of (ticker, date, price, change_pct, volume)"""
+    c = conn.cursor()
+    c.execute("DELETE FROM daily_prices WHERE date=?", (today,))
+    if rows:
+        c.executemany("INSERT INTO daily_prices VALUES (?,?,?,?,?)", rows)
+    conn.commit()
+    return len(rows)
 
-count=0
-# Look for any table row with 5 columns: Ticker, Price etc - parsing the main LuSE live table
-for table in soup.find_all("table"):
-    for tr in table.find_all("tr")[1:]:
-        tds=[td.get_text(strip=True) for td in tr.find_all("td")]
-        if len(tds)>=3 and tds[0].isupper() and len(tds[0])<=6:
-            try:
-                ticker=tds[0].replace("LuSE:","")
-                # price is usually last column before change
-                price=float(tds[-3].replace(",","")) if tds[-3] else 0
-                if price>0 and price<10000:
-                    c.execute("INSERT INTO daily_prices VALUES (?,?,?,?,?)",(ticker,today,price,0.0,0))
-                    count+=1
-            except:
+def scrape():
+    """Fetch live LuSE data. Returns list of tuples or empty list on any failure."""
+    try:
+        print(f"Fetching {URL}")
+        r = requests.get(URL, headers=HEADERS, timeout=15)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        rows = []
+        for table in soup.find_all("table"):
+            headers = [th.get_text(strip=True).lower() for th in table.find_all("th")]
+            if not any("ticker" in h or "price" in h for h in headers):
                 continue
 
-conn.commit()
-conn.close()
-print(f"Scraped {count} tickers FAST")
+            for tr in table.find_all("tr")[1:]:
+                tds = [td.get_text(strip=True) for td in tr.find_all("td")]
+                if len(tds) < 4:
+                    continue
+                try:
+                    ticker = tds[0].upper().replace("LUSE:", "").strip()
+                    if not ticker or not ticker.isalpha() or len(ticker) > 6:
+                        continue
 
-# Fallback to REAL Oct 14 data if scrape fails - ensures we never get K65.0 fake
-if count < 5:
-    conn=sqlite3.connect(DB)
-    c=conn.cursor()
-    fallback=[("BATZ",today,12.49,0.0,227),("SCBL",today,1.17,-0.85,7443),("ZNCO",today,8.95,-0.22,8813),("ZFCO",today,5.0,-11.82,1324),("DCZM",today,27.0,9.76,272),("REIZ",today,0.12,0.0,1000),("ZSUG",today,69.0,0.0,243),("BATA",today,9.53,0.0,150),("ZMFA",today,34.0,0.0,200),("KLRE",today,0.36,2.86,50)]
-    c.executemany("INSERT INTO daily_prices VALUES (?,?,?,?,?)",fallback)
-    conn.commit()
+                    vol_str = tds[2].replace(",", "").replace("-", "0") or "0"
+                    price_str = tds[3].replace(",", "")
+                    change_str = (
+                        tds[4].replace(",", "").replace("+", "")
+                        if len(tds) > 4
+                        else "0"
+                    )
+
+                    volume = int(float(vol_str)) if vol_str else 0
+                    price = float(price_str)
+                    abs_change = float(change_str) if change_str else 0.0
+
+                    if price <= 0 or price > 100000:
+                        continue
+
+                    prev = price - abs_change
+                    pct = round((abs_change / prev * 100) if prev else 0.0, 2)
+                    rows.append((ticker, today, price, pct, volume))
+                except (ValueError, IndexError):
+                    continue
+
+            if rows:
+                break
+
+        return rows
+    except Exception as e:
+        print(f"Scrape failed: {type(e).__name__}: {e}")
+        return []
+
+def main():
+    conn = sqlite3.connect(DB)
+    ensure_schema(conn)
+
+    rows = scrape()
+
+    if len(rows) < 5:
+        print(
+            f"Only {len(rows)} tickers scraped — NOT inserting any data "
+            "(avoids misleading prices)"
+        )
+        insert_rows(conn, [])  # clear today so downstream knows there is no live data
+        print("No live data stored for today")
+    else:
+        count = insert_rows(conn, rows)
+        print(f"Stored {count} live tickers for {today}")
+
     conn.close()
-    print(f"Used fallback REAL data {len(fallback)} tickers")
+
+if __name__ == "__main__":
+    main()
