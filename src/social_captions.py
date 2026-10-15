@@ -9,6 +9,15 @@ DB = "luse_v2.db"
 POST_DIR = "posts"
 os.makedirs(POST_DIR, exist_ok=True)
 
+# Read scrape source for attribution
+source = "LuSE"
+source_file = os.path.join(POST_DIR, ".last_scrape_source")
+if os.path.exists(source_file):
+    with open(source_file) as f:
+        src = f.read().strip()
+        if src and src != "none":
+            source = src
+
 caption = None
 try:
     conn = sqlite3.connect(DB)
@@ -27,7 +36,7 @@ try:
             f"🔥 LuSE Daily Wrap {date.today()}\n\n"
             f"Top Mover: {top_ticker} {sign}{top_change:.2f}%\n\n"
             f"Follow @CleverMoneyZM for daily LuSE updates.\n\n"
-            f"#LuSE #Zambia #Investing"
+            f"Data: {source} | #LuSE #Zambia #Investing"
         )
     else:
         caption = (

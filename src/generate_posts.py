@@ -21,6 +21,15 @@ def get_font(size):
             continue
     return ImageFont.load_default()
 
+# Attribution source
+source = "LuSE"
+source_file = os.path.join(POST_DIR, ".last_scrape_source")
+if os.path.exists(source_file):
+    with open(source_file) as f:
+        src = f.read().strip()
+        if src and src != "none":
+            source = src
+
 conn = sqlite3.connect(DB)
 c = conn.cursor()
 rows = []
@@ -40,7 +49,7 @@ draw = ImageDraw.Draw(img)
 
 font_big = get_font(70)
 font_med = get_font(45)
-font_small = get_font(35)
+font_small = get_font(32)
 
 draw.rectangle([0, 0, W, 200], fill="#112240")
 draw.text((50, 50), "LuSE Daily Wrap", fill="#64ffda", font=font_big)
@@ -52,17 +61,11 @@ draw.text(
 )
 
 if not rows:
-    # Honest message when there is no live data
     draw.text((50, 350), "No live market data", fill="#ff5555", font=font_med)
-    draw.text(
-        (50, 430),
-        "Available for today.",
-        fill="#ccd6f6",
-        font=font_med,
-    )
+    draw.text((50, 430), "Available for today.", fill="#ccd6f6", font=font_med)
     draw.text(
         (50, 530),
-        "Scrape failed or market closed.",
+        "Official sources unreachable or market closed.",
         fill="#8892b0",
         font=font_small,
     )
@@ -89,13 +92,20 @@ else:
     sign = "+" if top[2] >= 0 else ""
     caption = (
         f"LuSE Wrap {date.today()}: Top mover {top[0]} "
-        f"{sign}{top[2]:.2f}%. Follow! #LuSE #Zambia"
+        f"{sign}{top[2]:.2f}%. Follow! #LuSE #Zambia\n"
+        f"Data: {source}"
     )
 
 draw.text(
-    (50, H - 80),
+    (50, H - 100),
     "Follow @CleverMoneyZM for daily LuSE updates",
     fill="#8892b0",
+    font=font_small,
+)
+draw.text(
+    (50, H - 55),
+    f"Source: {source}",
+    fill="#64748b",
     font=font_small,
 )
 
