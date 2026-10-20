@@ -12,7 +12,7 @@ jobs:
       contents: write
     defaults:
       run:
-        shell: powershell
+        shell: cmd
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -40,6 +40,6 @@ jobs:
         run: |
           git config user.name "CleverMoneyBot"
           git config user.email "bot@clevermoney.zm"
-          git add posts/
-          git diff --staged --quiet; if ($LASTEXITCODE -ne 0) { git commit -m "Daily wrap $(Get-Date -Format yyyy-MM-dd)" } else { Write-Host "no changes" }
-          git push
+          git add posts/ || ver > nul
+          git diff --staged --quiet && echo no changes || git commit -m "Daily wrap"
+          git push || echo push skipped
