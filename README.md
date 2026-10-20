@@ -1,46 +1,52 @@
 # luse-clever-money
 
-Automated / on-demand LuSE (Lusaka Securities Exchange) market wrap for CleverMoney Zambia.
+On-demand LuSE (Lusaka Securities Exchange) market wrap for CleverMoney Zambia.
 
 ## Data sources — official only
 
-1. [luse.co.zm/trading/market-data](https://www.luse.co.zm/trading/market-data/)
-2. [luse.co.zm](https://www.luse.co.zm/) homepage tickers
+1. [luse.co.zm/trading/market-data](https://www.luse.co.zm/trading/market-data/) (HTTP or Playwright)
+2. Homepage tickers
+3. **`data/manual_prices.csv`** when Cloudflare blocks bots (recommended for now)
 
 No third-party aggregators. No fabricated prices.
 
-## How to run (recommended on Windows / Surface)
+## Recommended daily flow (Windows / Surface)
 
-Official LuSE is behind Cloudflare, so **GitHub-hosted runners usually fail**. Use one of:
+Cloudflare often returns **403** to scripts. Use official numbers via CSV:
 
-### A. On-demand GitHub Action (self-hosted runner)
+1. Open the [Market Data](https://www.luse.co.zm/trading/market-data/) page in your browser.
+2. Fill `data/manual_prices.csv` (see [docs/MANUAL_PRICES.md](docs/MANUAL_PRICES.md)).
+3. Start the runner (`run.cmd`) if using Actions.
+4. **Actions → Daily LuSE Wrap → Run workflow** (branch with latest code), **or** run locally:
 
-1. Register a Windows self-hosted runner (see [docs/SELF_HOSTED.md](docs/SELF_HOSTED.md)).
-2. Turn the machine on when you want a wrap.
-3. **Actions** → **Daily LuSE Wrap** → **Run workflow**.
-
-You do **not** need the device on 24/7.
-
-### B. Fully local
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\run_local.ps1
+```cmd
+pip install -r requirements.txt
+python src\scraper_v2.py
+python src\generate_posts.py
+python src\social_captions.py
 ```
 
 ## Honest data policy
 
-If official sources cannot be reached, **no prices are stored**. The post says live data is unavailable.
+If fewer than 5 tickers are available from any allowed source, **no prices are stored**.
+
+## Optional Playwright
+
+```cmd
+pip install playwright
+playwright install chromium
+```
 
 ## Project structure
 
 ```
-.github/workflows/   # daily.yml, weekly.yml (self-hosted)
+.github/workflows/   # self-hosted daily/weekly
 src/                 # scraper, DB, image, captions
-scripts/run_local.ps1
-docs/SELF_HOSTED.md
+data/                # manual_prices.csv (you create)
+docs/
 posts/
 ```
 
 ## Attribution
 
-Posts credit the official source. Not affiliated with LuSE.
+Posts credit the source used. Not affiliated with LuSE.

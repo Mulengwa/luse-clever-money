@@ -1,33 +1,32 @@
 """
 LuSE daily price scraper — OFFICIAL SOURCES ONLY.
 
-Sources (in order):
-  1. https://www.luse.co.zm/trading/market-data/
-  2. https://www.luse.co.zm/  (homepage tickers)
+Order of attempts:
+  1. HTTP (cloudscraper/requests) to official LuSE pages
+  2. Playwright browser (optional) if installed — beats many Cloudflare challenges
+  3. data/manual_prices.csv — recommended when HTTP is blocked
 
 No third-party aggregators. No fabricated prices.
-
-Note: luse.co.zm is protected by Cloudflare. From GitHub-hosted runners
-(datacenter IPs) the challenge often blocks access. Prefer a self-hosted
-runner in Zambia or a residential IP for reliable official access.
 """
 
+import csv
 import os
 import re
 import sqlite3
 from datetime import date
+from pathlib import Path
 
 from bs4 import BeautifulSoup
 
 DB = "luse_v2.db"
 today = str(date.today())
+MANUAL_CSV = Path("data/manual_prices.csv")
 
 OFFICIAL_MARKET_DATA = "https://www.luse.co.zm/trading/market-data/"
 OFFICIAL_HOME = "https://www.luse.co.zm/"
 
 
 def _session():
-    """Prefer cloudscraper (JS-challenge aware); fall back to requests."""
     try:
         import cloudscraper
 
@@ -80,7 +79,7 @@ def insert_rows(conn, rows):
 def _parse_number(text):
     if text is None:
         return None
-    t = str(text).strip().replace(",", "").replace("+", "")
+    t = str(text).strip().replace(",", "").replace("%", "").replace("+", "")
     if not t or t in ("-", "—", "N/A", "n/a"):
         return None
     try:
@@ -109,16 +108,8 @@ def _normalize_ticker(raw):
     return aliases.get(t, t)
 
 
-def scrape_official_market_data(session):
-    print(f"Trying official Market Data: {OFFICIAL_MARKET_DATA}")
-    r = session.get(OFFICIAL_MARKET_DATA, timeout=45)
-    print(f"  HTTP {r.status_code}, body length {len(r.text)}")
-    if r.status_code != 200:
-        raise RuntimeError(f"HTTP {r.status_code} (likely Cloudflare challenge)")
-    if "Just a moment" in r.text or "cf-mitigated" in r.text.lower():
-        raise RuntimeError("Cloudflare challenge page returned")
-
-    soup = BeautifulSoup(r.text, "html.parser")
+def _parse_tables_from_html(html):
+    soup = BeautifulSoup(html, "html.parser")
     rows = []
 
     for table in soup.find_all("table"):
@@ -136,6 +127,8 @@ def scrape_official_market_data(session):
                 col["price"] = i
             elif "price change" in h or h.strip() == "change":
                 col["change"] = i
+            elif "%" in h and "change" in h:
+                col["pct"] = i
             elif "volume" in h and "value" not in h:
                 col["volume"] = i
 
@@ -153,23 +146,36 @@ def scrape_official_market_data(session):
                 price = _parse_number(tds[col["price"]])
                 if price is None or price <= 0 or price > 100000:
                     continue
-                abs_change = 0.0
-                if "change" in col:
-                    v = _parse_number(tds[col["change"]])
+                pct = 0.0
+                if "pct" in col:
+                    v = _parse_number(tds[col["pct"]])
                     if v is not None:
-                        abs_change = v
+                        pct = v
+                elif "change" in col:
+                    abs_change = _parse_number(tds[col["change"]])
+                    pct = _pct_from_abs(price, abs_change)
                 volume = 0
                 if "volume" in col:
                     v = _parse_number(tds[col["volume"]])
                     if v is not None:
                         volume = int(v)
-                pct = _pct_from_abs(price, abs_change)
                 rows.append((ticker, today, price, pct, volume))
             except (ValueError, IndexError):
                 continue
         if rows:
             break
+    return rows
 
+
+def scrape_official_market_data(session):
+    print(f"Trying official Market Data: {OFFICIAL_MARKET_DATA}")
+    r = session.get(OFFICIAL_MARKET_DATA, timeout=45)
+    print(f"  HTTP {r.status_code}, body length {len(r.text)}")
+    if r.status_code != 200:
+        raise RuntimeError(f"HTTP {r.status_code} (likely Cloudflare challenge)")
+    if "Just a moment" in r.text or "cf-mitigated" in r.text.lower():
+        raise RuntimeError("Cloudflare challenge page returned")
+    rows = _parse_tables_from_html(r.text)
     print(f"  Official market-data → {len(rows)} tickers")
     return rows
 
@@ -185,7 +191,6 @@ def scrape_official_homepage(session):
 
     soup = BeautifulSoup(r.text, "html.parser")
     text = soup.get_text("\n", strip=True)
-
     rows = []
     pattern = re.compile(
         r"\b([A-Z]{2,8}(?:-IH)?)\b\s*[\n\r]+\s*"
@@ -213,13 +218,100 @@ def scrape_official_homepage(session):
     return rows
 
 
+def scrape_with_playwright():
+    """Optional: real browser. pip install playwright && playwright install chromium"""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print("  Playwright not installed — skip (pip install playwright)")
+        return []
+
+    print(f"Trying Playwright browser: {OFFICIAL_MARKET_DATA}")
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                )
+            )
+            page = context.new_page()
+            page.goto(OFFICIAL_MARKET_DATA, wait_until="networkidle", timeout=90000)
+            page.wait_for_timeout(3000)
+            html = page.content()
+            browser.close()
+    except Exception as e:
+        print(f"  Playwright failed: {type(e).__name__}: {e}")
+        return []
+
+    if "Just a moment" in html and "Security" in html:
+        print("  Playwright still got Cloudflare interstitial")
+        return []
+
+    rows = _parse_tables_from_html(html)
+    print(f"  Playwright market-data → {len(rows)} tickers")
+    return rows
+
+
+def load_manual_csv():
+    """
+    data/manual_prices.csv columns (header required):
+      ticker,price,change,volume
+    - change = percent change (e.g. -0.16 or 1.25)
+    - volume optional (default 0)
+    Only used when live sources fail or return < 5 rows.
+    """
+    if not MANUAL_CSV.is_file():
+        print(f"  No manual file at {MANUAL_CSV}")
+        return []
+
+    print(f"Loading manual prices: {MANUAL_CSV}")
+    rows = []
+    with MANUAL_CSV.open(newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        if not reader.fieldnames:
+            print("  Empty CSV")
+            return []
+        fields = {h.strip().lower(): h for h in reader.fieldnames if h}
+        if "ticker" not in fields or "price" not in fields:
+            print("  CSV needs columns: ticker,price,change[,volume]")
+            return []
+        for line in reader:
+            try:
+                ticker = _normalize_ticker(line[fields["ticker"]])
+                if not re.match(r"^[A-Z]{2,6}$", ticker):
+                    continue
+                price = _parse_number(line[fields["price"]])
+                if price is None or price <= 0:
+                    continue
+                pct = 0.0
+                if "change" in fields:
+                    v = _parse_number(line[fields["change"]])
+                    if v is not None:
+                        pct = v
+                volume = 0
+                if "volume" in fields:
+                    v = _parse_number(line[fields["volume"]])
+                    if v is not None:
+                        volume = int(v)
+                rows.append((ticker, today, price, pct, volume))
+            except (KeyError, ValueError):
+                continue
+
+    print(f"  Manual CSV → {len(rows)} tickers")
+    return rows
+
+
 def scrape():
     session = _session()
-    sources = [
+
+    # 1) Lightweight HTTP
+    for name, fn in [
         ("LuSE Market Data", lambda: scrape_official_market_data(session)),
         ("LuSE Homepage", lambda: scrape_official_homepage(session)),
-    ]
-    for name, fn in sources:
+    ]:
         try:
             rows = fn()
             if len(rows) >= 5:
@@ -227,11 +319,26 @@ def scrape():
             print(f"  {name}: only {len(rows)} tickers — trying next")
         except Exception as e:
             print(f"  {name} failed: {type(e).__name__}: {e}")
+
+    # 2) Optional browser
+    try:
+        rows = scrape_with_playwright()
+        if len(rows) >= 5:
+            return rows, "LuSE Market Data (Playwright)"
+    except Exception as e:
+        print(f"  Playwright path failed: {type(e).__name__}: {e}")
+
+    # 3) Manual CSV (your main path while Cloudflare blocks bots)
+    rows = load_manual_csv()
+    if len(rows) >= 5:
+        return rows, "Manual CSV (official figures entered by operator)"
+
     return [], None
 
 
 def main():
     os.makedirs("posts", exist_ok=True)
+    os.makedirs("data", exist_ok=True)
     conn = sqlite3.connect(DB)
     ensure_schema(conn)
 
@@ -239,12 +346,11 @@ def main():
 
     if len(rows) < 5:
         print(
-            f"Only {len(rows)} tickers from official sources — "
-            "NOT inserting any data (avoids misleading prices)."
+            f"Only {len(rows)} tickers — NOT inserting any data (avoids misleading prices)."
         )
         print(
-            "HINT: luse.co.zm uses Cloudflare. GitHub-hosted runners often fail. "
-            "Use a self-hosted runner (e.g. PC/VPS in Zambia) for reliable access."
+            "TIP: Copy data/manual_prices.example.csv → data/manual_prices.csv "
+            "and fill today's official LuSE closes, then re-run."
         )
         insert_rows(conn, [])
         with open("posts/.last_scrape_source", "w") as f:
